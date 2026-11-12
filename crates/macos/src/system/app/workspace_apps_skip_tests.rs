@@ -280,20 +280,18 @@ fn scoped_lookup_skips_a_gone_duplicate_of_a_live_app() {
     require_complete(&inventory.skipped).unwrap();
 }
 
+/// A first sighting is not yet stable; the same phantom again passes even at
+/// another index; a change to the set is churn; an empty set resets it.
 #[test]
 fn processless_records_pass_once_they_repeat_unchanged() {
     let phantom = |index: u64| json!({"pid": -1, "field": "pid", "index": index});
     let mut last = None;
-    // First sighting: not yet known to be stable.
     assert!(require_complete_with(&[phantom(94)], &mut last).is_err());
-    // The same phantom again, at another index after other apps came and went.
     require_complete_with(&[phantom(95)], &mut last).unwrap();
     require_complete_with(&[phantom(95)], &mut last).unwrap();
-    // A second processless record is a change, then stable again.
     let two = [phantom(95), json!({"pid": 0, "field": "pid"})];
     assert!(require_complete_with(&two, &mut last).is_err());
     require_complete_with(&two, &mut last).unwrap();
-    // No skipped records is complete and resets what was seen.
     require_complete_with(&[], &mut last).unwrap();
     assert!(require_complete_with(&[phantom(94)], &mut last).is_err());
 }
@@ -320,9 +318,9 @@ fn other_skipped_records_keep_the_inventory_incomplete() {
     }
 }
 
+/// The record seen on a real Mac: Preview with pid -1 although it was not running.
 #[test]
 fn a_phantom_appkit_record_does_not_block_a_scoped_lookup() {
-    // The record seen on a real Mac: Preview with pid -1 although it was not running.
     let bytes = serde_json::to_vec(&json!({
         "applications":[
             {"name":"Finder", "pid":10, "launch_time":100.0, "activation_policy":"regular"},

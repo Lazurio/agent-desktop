@@ -30,8 +30,6 @@ pub(super) fn bridged_snapshot(bytes: &[u8]) -> Result<BridgedWorkspaceSnapshot,
             _ => None,
         });
         if let Some(field) = field {
-            // A pid that is not a number stays as it is, so it never reads as
-            // the processless pid 0 that `require_complete` tolerates.
             let pid = app["pid"]
                 .as_i64()
                 .map_or_else(|| app["pid"].clone(), Value::from);
