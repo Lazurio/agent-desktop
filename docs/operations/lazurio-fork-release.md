@@ -58,6 +58,7 @@ Patche v pořadí, v jakém leží nad bází:
 | `fix(macos): tolerate stable processless AppKit records in complete inventories` | Záznam `NSRunningApplication` s `pid <= 0`, který se mezi dvěma čteními nemění, už nedělá inventář aplikací neúplným. Bez opravy `launch`, `find` a další příkazy závislé na inventáři opakují pokusy až do `application_inventory_unstable`. | Na skutečném Macu NSWorkspace držel takový záznam pro neběžící Preview a engine pak nespustil ani nenašel žádnou aplikaci. Upstream opravu nemá: vercel-labs/agent-desktop#553 (otevřený) zahazuje jen záznamy s `terminated == YES` a ostatní nechává v `skipped`. Návrh do upstreamu je připravený, odeslaný zatím není. | Až upstream vydá opravu, se kterou takový záznam inventář neblokuje |
 | `chore(lazurio): distribution version …` | Verze `X.Y.Z-lazurio.N` všude, kde ji upstream drží (`Cargo.toml`, `Cargo.lock`, `npm/package.json`). Upstreamový `release.yml` (npm a vydání upstreamu) běží jen ve `vercel-labs/agent-desktop`. | Distribuce se vydává tady, ne na npm | Zůstává |
 | `chore(lazurio): release workflow and distribution contract` | `.github/workflows/lazurio-release.yml`, tento dokument, poznámka v README a CI i na větvích `candidate/**` | Vydání s atestací, které aplikace Lazuria pinují | Zůstává |
+| `ci(lazurio): the CI of the shipped targets` | Joby `Test (Linux)`, `Test (Windows ARM64)` a `Windows lib-test parity` běží jen ve `vercel-labs/agent-desktop`; matice `FFI Panic Guard` nemá řádky pro Linux a Windows ARM64 | Distribuce tyto cíle nevydává a brána CI jsou joby vydávaných cílů. Kroky jobů zůstávají v souboru, protože testy upstreamu čtou text `ci.yml`. | Až distribuce začne vydávat Linux nebo Windows ARM64 |
 
 Tabulku drží commit, který patch přidává nebo mění. Každý nový patch do ní
 přibude se svým upstreamovým původem, důvodem a podmínkou odchodu.
@@ -141,6 +142,9 @@ na pinnutém commitu), nebo přiložené binárky podle digestu SHA-256; pohybli
 - Upstreamové CI běží na pull requestech, na `main` a i na větvích
   `candidate/**`, takže kandidát distribuce je otestovaný dřív, než nahradí
   `main`.
+- Brána jsou joby vydávaných cílů a joby nezávislé na platformě: `Format`,
+  `Docs build`, `Rust 1.89 MSRV`, `Test` (macOS), `Test (Windows)` a `FFI
+  Panic Guard` pro tři vydávané cíle.
 - Ostatní workflow upstreamu bránou nejsou. `Release Dry Run` (zkouška
   upstreamového vydání pro šest cílů) se spustí na pull requestu, který mění
   jeho cesty, a `CodeQL` se `Supply Chain` mají ve forku stav
