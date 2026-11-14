@@ -1,5 +1,7 @@
 # agent-desktop
 
+> **Lazurio distribution.** This is the Lazurio fork of [vercel-labs/agent-desktop](https://github.com/vercel-labs/agent-desktop): an exact upstream release plus a small patch stack that Lazurio's desktop apps need before upstream ships it. The patches, why each is carried, when each goes away and which targets are released: [docs/operations/lazurio-fork-release.md](docs/operations/lazurio-fork-release.md). Everything else is upstream's; please report upstream issues there.
+
 Computer use for AI agents: see and operate desktop apps on macOS, Windows, and Linux through the OS accessibility tree.
 
 <p>

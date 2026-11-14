@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    # Lazurio: a distribution candidate is tested before it replaces main.
+    branches: [main, master, 'candidate/**']
   pull_request:
   workflow_dispatch:
 
