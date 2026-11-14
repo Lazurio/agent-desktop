@@ -112,16 +112,6 @@ pub(crate) fn list_apps_inventory_until(deadline: Instant) -> Result<AppInventor
     list_apps_with(deadline, |_| true, true)
 }
 
-pub(crate) fn require_complete(skipped: &[serde_json::Value]) -> Result<(), AdapterError> {
-    if skipped.is_empty() {
-        return Ok(());
-    }
-    Err(records::with_skipped(
-        inventory_error("AppKit application inventory skipped records"),
-        skipped,
-    ))
-}
-
 /// Apps named `name`, optionally pinned to `bundle_id`. Without one, a bundle
 /// ID or executable name matches only when no app has that display name.
 pub(crate) fn list_apps_scoped_until(
@@ -393,6 +383,12 @@ mod tests;
 
 #[path = "workspace_apps_records.rs"]
 mod records;
+
+#[path = "workspace_apps_complete.rs"]
+mod complete;
+pub(crate) use complete::require_complete;
+#[cfg(test)]
+use complete::require_complete_with;
 use records::bridged_snapshot;
 
 #[cfg(test)]
