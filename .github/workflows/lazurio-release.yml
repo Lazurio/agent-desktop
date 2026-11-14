@@ -1,0 +1,266 @@
+name: Lazurio agent-desktop Release
+
+# The Lazurio distribution of agent-desktop (docs/operations/lazurio-fork-release.md):
+# builds the exact tip of main, which is an exact upstream release plus the
+# Lazurio patch stack, for the targets Lazurio ships (macOS arm64 and x64,
+# Windows x64), attests the binaries and, after the environment's approval,
+# publishes an immutable GitHub Release whose tag pins the engine that
+# Lazurio's desktop apps bundle. Upstream's npm release workflow does not run
+# in this fork.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: X.Y.Z-lazurio.N, equal to Cargo.toml and npm/package.json (tag vX.Y.Z-lazurio.N)
+        required: true
+        type: string
+      source_sha:
+        description: Exact 40-character commit at the tip of main
+        required: true
+        type: string
+      upstream_tag:
+        description: Exact upstream release tag the source is based on (vX.Y.Z)
+        required: true
+        type: string
+      upstream_sha:
+        description: Exact 40-character commit of the upstream tag
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: lazurio-release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  VERSION: ${{ inputs.version }}
+  RELEASE_TAG: v${{ inputs.version }}
+  SOURCE_SHA: ${{ inputs.source_sha }}
+  UPSTREAM_TAG: ${{ inputs.upstream_tag }}
+  UPSTREAM_SHA: ${{ inputs.upstream_sha }}
+  UPSTREAM_REPOSITORY: https://github.com/vercel-labs/agent-desktop.git
+
+jobs:
+  verify:
+    name: Verify source and version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check the shape of the inputs and the dispatch
+        run: |
+          set -euo pipefail
+          # The workflow that holds the publish permissions is main's own, run
+          # at the exact source: a dispatch from another ref never publishes.
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_SHA" = "$SOURCE_SHA"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-lazurio\.[1-9][0-9]*$ ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$UPSTREAM_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$UPSTREAM_SHA" =~ ^[0-9a-f]{40}$ ]]
+          # The distribution names the upstream release it is built on.
+          [[ "$VERSION" == "${UPSTREAM_TAG#v}-lazurio."* ]]
+          echo "version=$VERSION source_sha=$SOURCE_SHA upstream_tag=$UPSTREAM_TAG upstream_sha=$UPSTREAM_SHA"
+
+      - name: Check out the exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: The source is the tip of main and sits on the exact upstream release
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+          test "$(git rev-parse refs/remotes/origin/main)" = "$SOURCE_SHA"
+          git fetch --no-tags "$UPSTREAM_REPOSITORY" \
+            "refs/tags/$UPSTREAM_TAG:refs/tags/upstream-$UPSTREAM_TAG"
+          test "$(git rev-parse "refs/tags/upstream-$UPSTREAM_TAG^{commit}")" = "$UPSTREAM_SHA"
+          git merge-base --is-ancestor "$UPSTREAM_SHA" "$SOURCE_SHA"
+          # Only Lazurio commits on top of it: the history above the tag is linear.
+          test -z "$(git rev-list --merges "$UPSTREAM_SHA..$SOURCE_SHA")"
+          git log --oneline "$UPSTREAM_SHA..$SOURCE_SHA"
+
+      - name: The source names the version
+        run: |
+          set -euo pipefail
+          test "$(node scripts/release-version.js)" = "$VERSION"
+          test "$(node -p "require('./npm/package.json').version")" = "$VERSION"
+          scripts/check-release-consistency.sh
+
+      - name: Refuse an existing tag or release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -z "$(git ls-remote origin "refs/tags/$RELEASE_TAG")"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG exists already" >&2
+            exit 1
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Both macOS targets build on Apple silicon, as upstream's release does.
+          - os: macos-15
+            target: aarch64-apple-darwin
+          - os: macos-15
+            target: x86_64-apple-darwin
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+    steps:
+      - name: Check out the exact source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          # rust-toolchain.toml pins the toolchain.
+          rustup toolchain install 2>/dev/null || rustup show
+          rustup target add ${{ matrix.target }}
+          rustc --version
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p agent-desktop --target ${{ matrix.target }}
+          cargo build --locked --release -p agent-desktop-macos --bin agent-desktop-macos-helper --target ${{ matrix.target }}
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/agent-desktop artifacts/agent-desktop-${{ matrix.target }}
+          cp target/${{ matrix.target }}/release/agent-desktop-macos-helper artifacts/agent-desktop-macos-helper-${{ matrix.target }}
+          chmod +x artifacts/*
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --locked --release -p agent-desktop --target ${{ matrix.target }}
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/agent-desktop.exe artifacts/agent-desktop-${{ matrix.target }}.exe
+
+      - name: The binary reports the release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="artifacts/agent-desktop-${{ matrix.target }}"
+          if [ "$RUNNER_OS" = "Windows" ]; then binary="$binary.exe"; fi
+          reported="$("$binary" --version | tr -d '\r')"
+          echo "$reported"
+          test "$reported" = "agent-desktop $VERSION"
+          ls -l artifacts
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lazurio-${{ matrix.target }}
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish release
+    needs: [verify, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: lazurio-agent-desktop-release
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Recheck the release source after approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_SHA" = "$SOURCE_SHA"
+          tip="$(git ls-remote "https://github.com/$GITHUB_REPOSITORY.git" refs/heads/main | cut -f1)"
+          test "$tip" = "$SOURCE_SHA"
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG exists already" >&2
+            exit 1
+          fi
+
+      - name: Download binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: lazurio-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Collect release assets and checksums
+        run: |
+          set -euo pipefail
+          cd release-assets
+          expected="$(printf '%s\n' \
+            agent-desktop-aarch64-apple-darwin \
+            agent-desktop-macos-helper-aarch64-apple-darwin \
+            agent-desktop-macos-helper-x86_64-apple-darwin \
+            agent-desktop-x86_64-apple-darwin \
+            agent-desktop-x86_64-pc-windows-msvc.exe | LC_ALL=C sort)"
+          actual="$(find . -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)"
+          if [ "$actual" != "$expected" ]; then
+            printf 'Unexpected release assets:\n%s\n' "$actual" >&2
+            exit 1
+          fi
+          chmod +x agent-desktop-*
+          sha256sum agent-desktop-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Attest the binaries
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: release-assets/agent-desktop-*
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > notes.md <<NOTES
+          Lazurio distribution of agent-desktop: upstream [$UPSTREAM_TAG](https://github.com/vercel-labs/agent-desktop/releases/tag/$UPSTREAM_TAG) (\`$UPSTREAM_SHA\`) plus the Lazurio patch stack, built from \`$SOURCE_SHA\` for macOS (arm64, x64) and Windows (x64).
+
+          The patches, why each is carried and when it goes away: [docs/operations/lazurio-fork-release.md](https://github.com/$GITHUB_REPOSITORY/blob/$SOURCE_SHA/docs/operations/lazurio-fork-release.md).
+
+          Verify a binary: \`gh attestation verify agent-desktop-aarch64-apple-darwin --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/lazurio-release.yml --source-digest $SOURCE_SHA\`
+          NOTES
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title "agent-desktop $VERSION" \
+            --notes-file notes.md \
+            --prerelease=false \
+            release-assets/agent-desktop-* \
+            release-assets/SHA256SUMS
+
+      - name: The release is immutable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Immutability is a repository setting the approver reads back before
+          # approving (docs/operations/lazurio-fork-release.md); this proves it
+          # took effect. A mutable release fails the run loudly.
+          test "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isImmutable --jq .isImmutable)" = "true"
+          test "$(git ls-remote "https://github.com/$GITHUB_REPOSITORY.git" "refs/tags/$RELEASE_TAG" | cut -f1)" = "$SOURCE_SHA"

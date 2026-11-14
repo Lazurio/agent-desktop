@@ -776,6 +776,19 @@ struct IpCommand {
     }
 }
 
+/// Leaves the caller's POSIX session so a launcher that exits or is killed does not take a running sandbox
+/// host down with it. A process-group leader may not start a session, so one first joins its parent's group, or its session leader's when the parent is gone.
+enum CallerSession {
+    static func leave() {
+        if getsid(0) == getpid() || setsid() != -1 { return }
+        for group in [getpgid(getppid()), getsid(0)] {
+            if setpgid(0, group) == 0, setsid() != -1 { return }
+        }
+        let reason = String(cString: strerror(errno))
+        FileHandle.standardError.write(Data("vmhost: could not leave the caller's session, so the sandbox stops with its launcher: \(reason)\n".utf8))
+    }
+}
+
 enum VMHost {
     static func run(_ arguments: [String]) -> Int32 {
         do {
@@ -785,6 +798,7 @@ enum VMHost {
             case "install":
                 try InstallCommand.execute(rest)
             case "run":
+                CallerSession.leave()
                 try RunCommand.execute(rest)
             case "clone":
                 try CloneCommand.execute(rest)

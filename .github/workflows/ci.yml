@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    # Lazurio: a distribution candidate is tested before it replaces main.
+    branches: [main, master, 'candidate/**']
   pull_request:
   workflow_dispatch:
 
@@ -245,6 +246,8 @@ jobs:
         run: scripts/ci-npm-wrapper-smoke.sh
 
   test-linux:
+    # Lazurio: the distribution ships macOS and Windows x64 only (docs/operations/lazurio-fork-release.md).
+    if: github.repository == 'vercel-labs/agent-desktop'
     name: Test (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -583,6 +586,8 @@ jobs:
           Write-Host 'OK: private artifacts stayed under RUNNER_TEMP'
 
   test-windows-arm:
+    # Lazurio: the distribution ships macOS and Windows x64 only (docs/operations/lazurio-fork-release.md).
+    if: github.repository == 'vercel-labs/agent-desktop'
     name: Test (Windows ARM64)
     runs-on: windows-11-arm
     timeout-minutes: 45
@@ -686,6 +691,8 @@ jobs:
           Write-Host 'OK: private artifacts stayed under RUNNER_TEMP'
 
   windows-lib-test-parity:
+    # Lazurio: the distribution ships macOS and Windows x64 only (docs/operations/lazurio-fork-release.md).
+    if: github.repository == 'vercel-labs/agent-desktop'
     name: Windows lib-test parity (x64 vs ARM64)
     runs-on: ubuntu-latest
     needs: [test-windows, test-windows-arm]
@@ -739,18 +746,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Lazurio: only the shipped targets (docs/operations/lazurio-fork-release.md).
           - target: aarch64-apple-darwin
             runner: macos-latest
           - target: x86_64-apple-darwin
             runner: macos-latest
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04-arm
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
-          - target: aarch64-pc-windows-msvc
-            runner: windows-11-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
