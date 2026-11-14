@@ -226,6 +226,16 @@ jobs:
         run: |
           scripts/ci-ffi-helper-discovery-smoke.sh
 
+      - name: Lazurio release archive holds the engine and finds its helper
+        # Lazurio: the per-target archive of the distribution (docs/operations/lazurio-fork-release.md).
+        shell: bash
+        run: |
+          PACKAGE_ID=$(cargo pkgid -p agent-desktop | tr -d '\r')
+          VERSION=${PACKAGE_ID##*@}
+          TARGET=$(rustc -vV | tr -d '\r' | sed -n 's/^host: //p')
+          scripts/lazurio-release-archive.sh pack "$TARGET" "$VERSION" target/release target/lazurio-archive
+          scripts/lazurio-release-archive.sh check "target/lazurio-archive/agent-desktop-v$VERSION-$TARGET.tar.gz" "$TARGET" "$VERSION"
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
@@ -246,6 +256,8 @@ jobs:
         run: scripts/ci-npm-wrapper-smoke.sh
 
   test-linux:
+    # Lazurio: the distribution ships macOS and Windows x64 only (docs/operations/lazurio-fork-release.md).
+    if: github.repository == 'vercel-labs/agent-desktop'
     name: Test (Linux)
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -515,6 +527,16 @@ jobs:
       - name: Build stripped release binary
         run: cargo build --locked --release -p agent-desktop
 
+      - name: Lazurio release archive holds the engine
+        # Lazurio: the per-target archive of the distribution (docs/operations/lazurio-fork-release.md).
+        shell: bash
+        run: |
+          PACKAGE_ID=$(cargo pkgid -p agent-desktop | tr -d '\r')
+          VERSION=${PACKAGE_ID##*@}
+          TARGET=$(rustc -vV | tr -d '\r' | sed -n 's/^host: //p')
+          scripts/lazurio-release-archive.sh pack "$TARGET" "$VERSION" target/release target/lazurio-archive
+          scripts/lazurio-release-archive.sh check "target/lazurio-archive/agent-desktop-v$VERSION-$TARGET.tar.gz" "$TARGET" "$VERSION"
+
       - name: Windows E2E contract gate (scan and self-test halves)
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-e2e-windows-contract.ps1 -SelfTest
@@ -584,6 +606,8 @@ jobs:
           Write-Host 'OK: private artifacts stayed under RUNNER_TEMP'
 
   test-windows-arm:
+    # Lazurio: the distribution ships macOS and Windows x64 only (docs/operations/lazurio-fork-release.md).
+    if: github.repository == 'vercel-labs/agent-desktop'
     name: Test (Windows ARM64)
     runs-on: windows-11-arm
     timeout-minutes: 45
@@ -687,6 +711,8 @@ jobs:
           Write-Host 'OK: private artifacts stayed under RUNNER_TEMP'
 
   windows-lib-test-parity:
+    # Lazurio: the distribution ships macOS and Windows x64 only (docs/operations/lazurio-fork-release.md).
+    if: github.repository == 'vercel-labs/agent-desktop'
     name: Windows lib-test parity (x64 vs ARM64)
     runs-on: ubuntu-latest
     needs: [test-windows, test-windows-arm]
@@ -740,18 +766,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Lazurio: only the shipped targets (docs/operations/lazurio-fork-release.md).
           - target: aarch64-apple-darwin
             runner: macos-latest
           - target: x86_64-apple-darwin
             runner: macos-latest
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-22.04
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-22.04-arm
           - target: x86_64-pc-windows-msvc
             runner: windows-latest
-          - target: aarch64-pc-windows-msvc
-            runner: windows-11-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

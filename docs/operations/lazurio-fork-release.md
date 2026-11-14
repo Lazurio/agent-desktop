@@ -54,7 +54,8 @@ rozbalený engine přečíst schránku s prázdným `PATH`. Projde jen tehdy, kd
 engine pomocnou binárku najde a dosáhne na ni. Negativní kontrola položí
 pomocnou binárku pod jméno s příponou cíle a musí skončit chybou nalezení
 (`clipboard_helper_invalid`). Kontrolu spouští workflow vydání na každém
-archivu před nahráním.
+archivu před nahráním a CI forku na každém kandidátovi (joby `Test` a `Test
+(Windows)`).
 
 Jediný dnešní konzument, utilita Lazurio Agent Desktop, staví engine ze zdroje
 (`scripts/build-engine.sh`) a binárky kopíruje jako sidecary Tauri do
@@ -82,6 +83,7 @@ Patche v pořadí, v jakém leží nad bází:
 | `fix(macos): tolerate stable processless AppKit records in complete inventories` | Bridge u záznamu `NSRunningApplication` s `pid <= 0` hlásí v `skipped` i to, co ho ještě identifikuje: `terminated`, jméno, bundle ID, spustitelný soubor a čas spuštění. Takový záznam nedělá inventář neúplným, jen když se jeho identita nezmění mezi dvěma po sobě jdoucími kontrolami úplnosti téže operace (jedna smyčka opakovaného čtení; mimo ni a z jiné operace se nic neporovnává) a když buď je ukončený, nebo nese jméno, bundle ID i spustitelný soubor a žádný z nich na hledanou aplikaci nesedí. S živým záznamem zůstává neúplné hledání aplikace, kterou může znamenat, každé hledání, když záznamu některý z těch tří údajů chybí, i úplný inventář všech aplikací. Bez opravy `launch`, `find` a další příkazy závislé na inventáři opakují pokusy až do `application_inventory_unstable`. | Na skutečném Macu NSWorkspace držel takový záznam pro Preview a engine pak nespustil ani nenašel žádnou aplikaci. Upstream opravu nemá. Stejná změna je odeslaná upstreamu jako vercel-labs/agent-desktop#684 (otevřený, z větve `upstream/macos-stable-processless-records` tohoto forku). vercel-labs/agent-desktop#553 (otevřený, jiný přispěvatel) řeší užší případ: bridge zahodí záznam bez procesu jen s `terminated == YES`. | Až upstream vydá #684 nebo jinou opravu, se kterou takový záznam inventář neblokuje |
 | `chore(lazurio): distribution version …` | Verze `X.Y.Z-lazurio.N` všude, kde ji upstream drží (`Cargo.toml`, `Cargo.lock`, `npm/package.json`). Upstreamový `release.yml` (npm a vydání upstreamu) běží jen ve `vercel-labs/agent-desktop`. | Distribuce se vydává tady, ne na npm | Zůstává |
 | `chore(lazurio): release workflow and distribution contract` | `.github/workflows/lazurio-release.yml`, `scripts/lazurio-release-archive.sh`, tento dokument, poznámka v README a CI i na větvích `candidate/**` | Vydání s atestací, které aplikace Lazuria pinují | Zůstává |
+| `ci(lazurio): the CI of the shipped targets` | Joby `Test (Linux)`, `Test (Windows ARM64)` a `Windows lib-test parity` běží jen ve `vercel-labs/agent-desktop`; matice `FFI Panic Guard` nemá řádky pro Linux a Windows ARM64; joby `Test` a `Test (Windows)` zabalí a zkontrolují archiv vydání | Distribuce tyto cíle nevydává a brána CI jsou joby vydávaných cílů. Kroky jobů zůstávají v souboru, protože testy upstreamu čtou text `ci.yml`. | Až distribuce začne vydávat Linux nebo Windows ARM64 |
 
 Tabulku drží commit, který patch přidává nebo mění. Každý nový patch do ní
 přibude se svým upstreamovým původem, důvodem a podmínkou odchodu.
@@ -182,6 +184,11 @@ na pinnutém commitu), nebo přiložené archivy podle digestu SHA-256; pohybliv
 - Upstreamové CI běží na pull requestech, na `main` a i na větvích
   `candidate/**`, takže kandidát distribuce je otestovaný dřív, než nahradí
   `main`.
+- Brána jsou joby vydávaných cílů a joby nezávislé na platformě: `Format`,
+  `Docs build`, `Rust 1.89 MSRV`, `Test` (macOS), `Test (Windows)` a `FFI
+  Panic Guard` pro tři vydávané cíle.
+- Joby `Test` a `Test (Windows)` navíc zabalí archiv vydání pro cíl runneru
+  a zkontrolují ho stejně jako workflow vydání (oddíl Vydávané cíle).
 - `Native desktop E2E` (`native-e2e.yml`) běží jen na self-hosted runneru
   s popisky `self-hosted`, `macOS` a `agent-desktop-e2e`. Fork ani Organizace
   takový runner nemají, takže na GitHubu neběží. Upstream před mergem
