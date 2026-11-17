@@ -1,0 +1,79 @@
+name: Hosted Windows E2E of a candidate
+
+# Runs the exclusive Windows suite (scripts/run-windows-e2e-ci.ps1, which builds
+# the engine and the WPF fixture, runs the U6 self-test tier and then
+# tests/e2e-windows/Run-E2E.ps1) on a GitHub-hosted windows-2025 runner, whose
+# interactive desktop nobody else uses, for the candidate of
+# Lazurio/agent-desktop#2 and the unchanged upstream release it is based on.
+# The code under test is the exact commit below, checked out on its own; this
+# workflow's branch only carries this file and is never merged.
+
+on:
+  push:
+    branches: ["e2e/hosted-windows-*"]
+
+concurrency:
+  group: hosted-windows-e2e-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  e2e:
+    name: Native Windows E2E (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: candidate, ref: 8e403858e43dd484437cb3ce815e979872abbc55 }
+          - { label: upstream-v1.3.1, ref: b0b7277bea09b770ef9d1fb45aad667bc432cd57 }
+    runs-on: windows-2025
+    timeout-minutes: 150
+    permissions:
+      contents: read
+    env:
+      CANDIDATE: ${{ matrix.ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.CANDIDATE }}
+          path: candidate
+          persist-credentials: false
+      - name: Machine and candidate
+        shell: pwsh
+        working-directory: candidate
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\out" | Out-Null
+          $head = git rev-parse HEAD
+          @(
+            (Get-Date).ToUniversalTime().ToString('o'),
+            [System.Environment]::OSVersion.VersionString,
+            (Get-CimInstance Win32_OperatingSystem).Caption,
+            "session $([System.Diagnostics.Process]::GetCurrentProcess().SessionId)",
+            $head
+          ) | Tee-Object -FilePath "$env:RUNNER_TEMP\out\machine.txt"
+          if ($head -ne $env:CANDIDATE) { throw "HEAD is not the candidate" }
+      - name: Pinned Rust toolchain
+        shell: pwsh
+        working-directory: candidate
+        run: rustup show
+      - name: Exclusive Windows suite
+        shell: pwsh
+        working-directory: candidate
+        env:
+          AGENT_DESKTOP_NATIVE_E2E_RUNNER: "1"
+        run: |
+          $start = (Get-Date).ToUniversalTime().ToString('o')
+          $start | Out-File "$env:RUNNER_TEMP\out\suite-start.txt"
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-windows-e2e-ci.ps1 *>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP\out\suite.log"
+          $code = $LASTEXITCODE
+          (Get-Date).ToUniversalTime().ToString('o') | Out-File "$env:RUNNER_TEMP\out\suite-end.txt"
+          "exit=$code" | Tee-Object -FilePath "$env:RUNNER_TEMP\out\suite-exit.txt"
+          exit $code
+      - name: Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-windows-e2e-${{ matrix.label }}
+          path: ${{ runner.temp }}/out
+          retention-days: 30
