@@ -1,0 +1,82 @@
+name: Hosted macOS diagnosis of one E2E check
+
+# One check of tests/e2e differs between the candidate of Lazurio/agent-desktop#2
+# and the upstream release it is based on (run 44126028780 on macos-15-intel):
+# "wait actionable evaluates the requested click policy". The suite logs only
+# `data.observed`; this job repeats the same `wait --predicate actionable
+# --action click` on the fixture's primary button and keeps every whole answer,
+# for both commits on the same runner type. Never merged.
+
+on:
+  push:
+    branches: ["e2e/diag-*"]
+
+permissions: {}
+
+jobs:
+  diag:
+    name: wait actionable (${{ matrix.label }}, ${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: candidate, ref: 8e403858e43dd484437cb3ce815e979872abbc55, runner: macos-15-intel }
+          - { label: upstream-v1.3.1, ref: b0b7277bea09b770ef9d1fb45aad667bc432cd57, runner: macos-15-intel }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.ref }}
+          path: candidate
+          persist-credentials: false
+      - name: Build
+        working-directory: candidate
+        run: |
+          test "$(git rev-parse HEAD)" = "${{ matrix.ref }}"
+          cargo build --locked --release -p agent-desktop
+          cargo build --locked --release -p agent-desktop-macos --bin agent-desktop-macos-helper
+      - name: Repeat the check
+        working-directory: candidate
+        run: |
+          set +e
+          out="$RUNNER_TEMP/out"; mkdir -p "$out"
+          B="$PWD/target/release/agent-desktop"
+          bash tests/fixture-app/build.sh "$RUNNER_TEMP/fixture" > "$out/fixture-build.log" 2>&1
+          osascript -e 'tell application "Finder" to make new Finder window' \
+                    -e 'tell application "Finder" to activate'
+          open "$RUNNER_TEMP/fixture/AgentDeskFixture.app"
+          sleep 5
+          for i in $(seq 1 10); do
+            found="$("$B" find --app AgentDeskFixture --role button --name primary-button --first)"
+            target="$(printf '%s' "$found" | python3 tests/e2e/json_tool.py target)"
+            ref="${target%%$'\t'*}"
+            echo "== attempt $i ref=$ref" >> "$out/wait.log"
+            "$B" wait --element "$ref" --predicate actionable --timeout 3000 --action click >> "$out/wait.log" 2>&1
+            echo "[exit $?]" >> "$out/wait.log"
+            "$B" click "$ref" > /dev/null 2>&1
+            sleep 0.5
+          done
+          "$B" list-apps > "$out/list-apps.json" 2>&1
+          "$B" close-app AgentDeskFixture --force > /dev/null 2>&1
+          python3 - "$out/wait.log" <<'PY' | tee "$out/summary.txt"
+          import json, re, sys
+          text = open(sys.argv[1]).read()
+          for block in re.split(r"^== ", text, flags=re.M)[1:]:
+              head, _, body = block.partition("\n")
+              raw = body.rsplit("[exit", 1)[0].strip()
+              try:
+                  j = json.loads(raw)
+                  d = j.get("data") or {}
+                  e = j.get("error") or {}
+                  print(head, "ok=", j.get("ok"), "found=", d.get("found"), "observed=", d.get("observed"), "error=", e.get("code"), (e.get("message") or "")[:160])
+              except Exception:
+                  print(head, "non-json:", raw[:200])
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diag-${{ matrix.label }}-${{ matrix.runner }}
+          path: ${{ runner.temp }}/out
