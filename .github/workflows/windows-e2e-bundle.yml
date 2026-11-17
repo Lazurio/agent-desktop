@@ -130,11 +130,14 @@ jobs:
           $out = Join-Path $env:RUNNER_TEMP 'bundle-run'
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'Invoke-BundleSuite.ps1') -BundleRoot $root -OutDir $out
           $code = $LASTEXITCODE
-          "runner-exit=$code" | Tee-Object -FilePath (Join-Path $out 'run.log') -Append
+          Add-Content -LiteralPath (Join-Path $out 'run.log') -Value "runner-exit=$code" -Encoding utf8
           Get-Content -LiteralPath (Join-Path $out 'run.log')
           if (Test-Path (Join-Path $out 'suite.log')) { Get-Content -LiteralPath (Join-Path $out 'suite.log') -Tail 40 }
           if ($code -eq 4 -or $code -eq 3) { throw "Invoke-BundleSuite.ps1 exit $code" }
           if (-not (Select-String -Quiet -LiteralPath (Join-Path $out 'suite.log') -Pattern 'running scenario SplitIntegrity')) { throw 'the suite did not reach SplitIntegrity from the bundle' }
+          # The suite's own exit 1 (SplitIntegrity on a hosted runner) is the
+          # expected end here, not this check's result.
+          exit 0
       - name: Completeness log
         if: always()
         uses: actions/upload-artifact@v4

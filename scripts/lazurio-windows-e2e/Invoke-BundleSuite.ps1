@@ -31,7 +31,19 @@ $OutDir = (Resolve-Path -LiteralPath $OutDir).Path
 $check = Join-Path $PSScriptRoot 'Test-InteractiveInput.ps1'
 $exe = Join-Path $BundleRoot 'target\release\agent-desktop.exe'
 $fixture = Join-Path $BundleRoot 'tests\fixture-app-windows\build\AgentDeskFixture.exe'
-$stamp = { (Get-Date).ToUniversalTime().ToString('o') }
+$runLog = Join-Path $OutDir 'run.log'
+# Every log is UTF-8; Windows PowerShell 5.1 would otherwise write UTF-16.
+function Write-RunLog([string]$Text) {
+    Write-Host $Text
+    Add-Content -LiteralPath $runLog -Value $Text -Encoding UTF8
+}
+function Stamp { (Get-Date).ToUniversalTime().ToString('o') }
+function Invoke-InputCheck {
+    $text = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $check 2>&1 | Out-String
+    $code = $LASTEXITCODE
+    Write-RunLog $text.TrimEnd()
+    return $code
+}
 
 Add-Type -TypeDefinition @'
 using System.Runtime.InteropServices;
@@ -41,7 +53,7 @@ public static class BundleSuiteAwake {
 '@
 # ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED, until this process ends.
 $awake = [BundleSuiteAwake]::SetThreadExecutionState([uint32]2147483651)
-"$(& $stamp) keep awake: $(if ($awake -ne 0) { 'on' } else { 'refused' })" | Tee-Object -FilePath (Join-Path $OutDir 'run.log')
+Write-RunLog "$(Stamp) keep awake: $(if ($awake -ne 0) { 'on' } else { 'refused' })"
 
 Get-ChildItem -LiteralPath $BundleRoot -Recurse -File | Unblock-File
 $bad = @(Get-Content -LiteralPath (Join-Path $BundleRoot 'SHA256SUMS.txt') | ForEach-Object {
@@ -50,24 +62,23 @@ $bad = @(Get-Content -LiteralPath (Join-Path $BundleRoot 'SHA256SUMS.txt') | For
     if (-not (Test-Path -LiteralPath $path) -or (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() -ne $hash) { $rel }
 })
 if ($bad.Count -gt 0) {
-    "$(& $stamp) bundle does not match SHA256SUMS.txt: $($bad -join ', ')" | Tee-Object -FilePath (Join-Path $OutDir 'run.log') -Append
+    Write-RunLog "$(Stamp) bundle does not match SHA256SUMS.txt: $($bad -join ', ')"
     exit 4
 }
-"$(& $stamp) bundle: $((Get-Content -LiteralPath (Join-Path $BundleRoot 'BUNDLE.txt')) -join ' | ')" | Tee-Object -FilePath (Join-Path $OutDir 'run.log') -Append
+Write-RunLog "$(Stamp) bundle: $((Get-Content -LiteralPath (Join-Path $BundleRoot 'BUNDLE.txt')) -join ' | ')"
 
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $check *>&1 | Tee-Object -FilePath (Join-Path $OutDir 'run.log') -Append
-if ($LASTEXITCODE -ne 0) { exit 3 }
+if ((Invoke-InputCheck) -ne 0) { exit 3 }
 
-"$(& $stamp) U6 self-test tier" | Tee-Object -FilePath (Join-Path $OutDir 'run.log') -Append
+Write-RunLog "$(Stamp) U6 self-test tier"
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $BundleRoot 'tests\e2e-windows\selftest\Invoke-U6SelfTests.ps1') -AgentDesktopBinary $exe *>&1 | Out-File -LiteralPath (Join-Path $OutDir 'u6.log') -Encoding utf8
 $u6 = $LASTEXITCODE
-"$(& $stamp) U6 exit=$u6" | Tee-Object -FilePath (Join-Path $OutDir 'run.log') -Append
+Write-RunLog "$(Stamp) U6 exit=$u6"
 if ($u6 -ne 0) { exit 1 }
 
-"$(& $stamp) live suite" | Tee-Object -FilePath (Join-Path $OutDir 'run.log') -Append
+Write-RunLog "$(Stamp) live suite"
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $BundleRoot 'tests\e2e-windows\Run-E2E.ps1') -AgentDesktopBinary $exe -FixtureBinary $fixture *>&1 | Out-File -LiteralPath (Join-Path $OutDir 'suite.log') -Encoding utf8
 $suite = $LASTEXITCODE
-"$(& $stamp) suite exit=$suite" | Tee-Object -FilePath (Join-Path $OutDir 'run.log') -Append
+Write-RunLog "$(Stamp) suite exit=$suite"
 
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $check *>&1 | Tee-Object -FilePath (Join-Path $OutDir 'run.log') -Append
+Invoke-InputCheck | Out-Null
 if ($suite -eq 0) { exit 0 } else { exit 1 }
