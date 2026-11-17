@@ -57,6 +57,23 @@ jobs:
         shell: pwsh
         working-directory: candidate
         run: rustup show
+      - name: Diagnostic only - declare the two fixture ids upstream's inventory misses
+        # Upstream 44b573fc added `horizontal-scroll-area` and
+        # `horizontal-edge-target` to the WPF fixture but not to
+        # tests/e2e-windows/fixture-inventory.psd1, so Preconditions aborts
+        # before any scenario on both the candidate and upstream v1.3.1. This
+        # adds them in the checked-out copy only, to see the engine on the
+        # desktop; the candidate is not changed.
+        shell: pwsh
+        working-directory: candidate
+        run: |
+          $path = 'tests\e2e-windows\fixture-inventory.psd1'
+          $text = Get-Content -Raw -LiteralPath $path
+          $marker = "'zero-bounds-button'"
+          if (-not $text.Contains($marker)) { throw "inventory marker missing" }
+          $text = $text.Replace($marker, "'zero-bounds-button', 'horizontal-scroll-area', 'horizontal-edge-target'")
+          Set-Content -LiteralPath $path -Value $text -NoNewline
+          git diff --stat
       - name: Exclusive Windows suite
         shell: pwsh
         working-directory: candidate
