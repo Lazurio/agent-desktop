@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: hosted-macos-e2e-${{ github.ref }}
+  group: hosted-macos-e2e-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 permissions: {}
@@ -26,8 +26,14 @@ env:
 
 jobs:
   e2e:
-    name: Native macOS E2E (macos-15, Apple silicon)
-    runs-on: macos-15
+    name: Native macOS E2E (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Apple silicon and Intel: both are targets of the release, and the
+        # Apple silicon pool may not have capacity.
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     permissions:
       contents: read
@@ -97,6 +103,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hosted-macos-e2e-${{ env.CANDIDATE }}
+          name: hosted-macos-e2e-${{ env.CANDIDATE }}-${{ matrix.runner }}
           path: ${{ runner.temp }}/out
           retention-days: 30
