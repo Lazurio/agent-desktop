@@ -47,6 +47,11 @@ jobs:
           ref: ${{ env.SOURCE }}
           path: source
           persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: runner
+          persist-credentials: false
+          sparse-checkout: scripts/lazurio-windows-e2e
       - name: Source
         shell: pwsh
         working-directory: source
@@ -87,6 +92,7 @@ jobs:
             New-Item -ItemType Directory -Force -Path (Join-Path $out (Split-Path -Parent $dir)) | Out-Null
             Copy-Item -Recurse -LiteralPath (Join-Path 'source' $dir) -Destination (Join-Path $out $dir)
           }
+          Copy-Item -LiteralPath 'runner\scripts\lazurio-windows-e2e\Invoke-BundleSuite.ps1', 'runner\scripts\lazurio-windows-e2e\Test-InteractiveInput.ps1' -Destination $out
           New-Item -ItemType Directory -Force -Path (Join-Path $out 'target\release') | Out-Null
           Copy-Item -LiteralPath 'source\target\release\agent-desktop.exe' -Destination (Join-Path $out 'target\release\agent-desktop.exe')
           $version = & (Join-Path $out 'target\release\agent-desktop.exe') version 2>&1 | Out-String
@@ -112,26 +118,28 @@ jobs:
           retention-days: 30
           if-no-files-found: error
       - name: Completeness check - run the suite from the bundle alone
-        # The source checkout is removed first, so only the bundle is there.
-        # The expected end on a hosted runner is SplitIntegrity (no
-        # foreground hand-over); any earlier abort means the bundle is
-        # missing something.
+        # Both checkouts are removed first, so only the bundle is there, and
+        # the suite runs through the bundle's own Invoke-BundleSuite.ps1. The
+        # expected end on a hosted runner is SplitIntegrity (no foreground
+        # hand-over, exit 1); an earlier abort, a checksum mismatch (4) or a
+        # refused input check (3) is reported as such.
         shell: pwsh
         run: |
-          Remove-Item -Recurse -Force source
+          Remove-Item -Recurse -Force source, runner
           $root = Join-Path $env:RUNNER_TEMP $env:BUNDLE
-          $log = Join-Path $env:RUNNER_TEMP 'bundle-run.log'
-          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tests\e2e-windows\selftest\Invoke-U6SelfTests.ps1') -AgentDesktopBinary (Join-Path $root 'target\release\agent-desktop.exe') *>&1 | Tee-Object -FilePath $log
-          "u6-exit=$LASTEXITCODE" | Tee-Object -FilePath $log -Append
-          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tests\e2e-windows\Run-E2E.ps1') -AgentDesktopBinary (Join-Path $root 'target\release\agent-desktop.exe') -FixtureBinary (Join-Path $root 'tests\fixture-app-windows\build\AgentDeskFixture.exe') *>&1 | Tee-Object -FilePath $log -Append
-          "suite-exit=$LASTEXITCODE" | Tee-Object -FilePath $log -Append
-          $text = Get-Content -Raw -LiteralPath $log
-          if ($text -notmatch 'running scenario SplitIntegrity') { throw 'the suite did not reach SplitIntegrity from the bundle' }
+          $out = Join-Path $env:RUNNER_TEMP 'bundle-run'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'Invoke-BundleSuite.ps1') -BundleRoot $root -OutDir $out
+          $code = $LASTEXITCODE
+          "runner-exit=$code" | Tee-Object -FilePath (Join-Path $out 'run.log') -Append
+          Get-Content -LiteralPath (Join-Path $out 'run.log')
+          if (Test-Path (Join-Path $out 'suite.log')) { Get-Content -LiteralPath (Join-Path $out 'suite.log') -Tail 40 }
+          if ($code -eq 4 -or $code -eq 3) { throw "Invoke-BundleSuite.ps1 exit $code" }
+          if (-not (Select-String -Quiet -LiteralPath (Join-Path $out 'suite.log') -Pattern 'running scenario SplitIntegrity')) { throw 'the suite did not reach SplitIntegrity from the bundle' }
       - name: Completeness log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BUNDLE }}-completeness-log
-          path: ${{ runner.temp }}/bundle-run.log
+          path: ${{ runner.temp }}/bundle-run
           retention-days: 30
           if-no-files-found: warn
