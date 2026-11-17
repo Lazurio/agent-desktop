@@ -269,10 +269,11 @@ mod imp {
             if ends_clipping_walk(role.as_deref()) {
                 return Ok(Some(visible));
             }
-            if role.as_deref().is_some_and(clips_descendants) {
+            if let Some(role) = role.as_deref().filter(|role| clips_descendants(role)) {
                 let Some(bounds) = read_bounds_with_deadline(&current, deadline)? else {
                     return Ok(None);
                 };
+                let bounds = clip_frame(&current, role, bounds, deadline);
                 let Some(intersection) = intersect_rects(visible, bounds) else {
                     return Ok(None);
                 };
@@ -291,6 +292,7 @@ mod imp {
 
     use crate::tree::element_bounds::clips_descendants;
     pub(super) use crate::tree::element_bounds::intersect_rects;
+    use crate::tree::scroll_clip::clip_frame;
 
     pub(super) fn remember_ancestor(visited: &mut Vec<AXElement>, current: &AXElement) -> bool {
         if visited

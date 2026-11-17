@@ -1,6 +1,7 @@
 use agent_desktop_core::{AdapterError, Deadline, ErrorCode, Rect};
 
 use super::AXElement;
+use super::scroll_clip::clip_frame;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn rect_from_parts(
@@ -117,11 +118,9 @@ pub(crate) fn ancestor_viewport(
             return Ok(viewport);
         }
         if clips_descendants(&role) {
-            viewport = clipped_viewport(
-                viewport,
-                &role,
-                read_bounds_with_deadline(&parent, instant)?,
-            );
+            let bounds = read_bounds_with_deadline(&parent, instant)?
+                .map(|frame| clip_frame(&parent, &role, frame, instant));
+            viewport = clipped_viewport(viewport, &role, bounds);
         }
         if role == "AXWindow" {
             return Ok(viewport);

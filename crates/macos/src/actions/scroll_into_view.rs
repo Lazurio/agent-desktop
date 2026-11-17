@@ -104,7 +104,16 @@ mod imp {
                 .ok_or_else(|| {
                     AdapterError::new(ErrorCode::ActionFailed, "Target viewport has no bounds")
                 })?;
-        Ok(direction_for_visibility(bounds, viewport_bounds))
+        let viewport_role = crate::tree::surface_read::string(&viewport, "AXRole", instant)?;
+        Ok(direction_for_visibility(
+            bounds,
+            crate::tree::scroll_clip::clip_frame(
+                &viewport,
+                viewport_role.as_deref().unwrap_or(""),
+                viewport_bounds,
+                instant,
+            ),
+        ))
     }
 
     pub(super) enum ViewportSeed {
