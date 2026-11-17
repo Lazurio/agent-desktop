@@ -1,0 +1,137 @@
+name: Windows E2E bundle of a candidate
+
+# Builds, on a GitHub-hosted windows-2025 runner, what the exclusive Windows
+# suite (tests/e2e-windows/Run-E2E.ps1) needs to run on a Windows machine with
+# a signed-in interactive session but without Rust or a .NET SDK: the release
+# agent-desktop.exe, the WPF fixture (built with the in-box .NET Framework
+# csc.exe) and the suite's own files, in the repository's layout. Done for the
+# candidate of Lazurio/agent-desktop#2 and for the unchanged upstream release
+# it is based on.
+#
+# The bundle is then run once here, from its extracted copy only, to prove it
+# carries everything the suite loads. A hosted runner cannot hand the
+# foreground over, so that run is expected to end in SplitIntegrity; it is a
+# completeness check, not a verdict.
+#
+# This workflow's branch only carries this file and is never merged.
+
+on:
+  push:
+    branches: ["e2e/windows-bundle-*"]
+
+concurrency:
+  group: windows-e2e-bundle-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  bundle:
+    name: Windows E2E bundle (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: candidate, ref: 7529fdecf74b03d9fb30d142ea886f4a0ede33aa }
+          - { label: upstream-v1.3.1, ref: b0b7277bea09b770ef9d1fb45aad667bc432cd57 }
+    runs-on: windows-2025
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    env:
+      SOURCE: ${{ matrix.ref }}
+      BUNDLE: agent-desktop-e2e-${{ matrix.label }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.SOURCE }}
+          path: source
+          persist-credentials: false
+      - name: Source
+        shell: pwsh
+        working-directory: source
+        run: |
+          $head = git rev-parse HEAD
+          if ($head -ne $env:SOURCE) { throw "HEAD is not the source" }
+          rustup show
+      - name: Declare the two fixture ids upstream's inventory misses
+        # Upstream 44b573fc added `horizontal-scroll-area` and
+        # `horizontal-edge-target` to the WPF fixture but not to
+        # tests/e2e-windows/fixture-inventory.psd1, so Preconditions aborts
+        # before any scenario on both the candidate and upstream v1.3.1. The
+        # bundle carries the inventory with both ids; the engine is unchanged.
+        shell: pwsh
+        working-directory: source
+        run: |
+          $path = 'tests\e2e-windows\fixture-inventory.psd1'
+          $text = Get-Content -Raw -LiteralPath $path
+          $marker = "'zero-bounds-button'"
+          if (-not $text.Contains($marker)) { throw "inventory marker missing" }
+          $text = $text.Replace($marker, "'zero-bounds-button', 'horizontal-scroll-area', 'horizontal-edge-target'")
+          Set-Content -LiteralPath $path -Value $text -NoNewline
+          git diff --stat
+      - name: Build the engine and the fixture
+        shell: pwsh
+        working-directory: source
+        run: |
+          cargo build -p agent-desktop --locked --release
+          if ($LASTEXITCODE -ne 0) { throw "cargo build failed: $LASTEXITCODE" }
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tests\fixture-app-windows\build.ps1
+          if ($LASTEXITCODE -ne 0) { throw "fixture build failed: $LASTEXITCODE" }
+      - name: Assemble the bundle
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP $env:BUNDLE
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          foreach ($dir in @('tests\e2e-windows', 'tests\fixture-app-windows', 'probes\windows\26-shell-surfaces')) {
+            New-Item -ItemType Directory -Force -Path (Join-Path $out (Split-Path -Parent $dir)) | Out-Null
+            Copy-Item -Recurse -LiteralPath (Join-Path 'source' $dir) -Destination (Join-Path $out $dir)
+          }
+          New-Item -ItemType Directory -Force -Path (Join-Path $out 'target\release') | Out-Null
+          Copy-Item -LiteralPath 'source\target\release\agent-desktop.exe' -Destination (Join-Path $out 'target\release\agent-desktop.exe')
+          $version = & (Join-Path $out 'target\release\agent-desktop.exe') version 2>&1 | Out-String
+          @(
+            "source $env:SOURCE ($env:BUNDLE)",
+            "built $((Get-Date).ToUniversalTime().ToString('o')) on $((Get-CimInstance Win32_OperatingSystem).Caption)",
+            "inventory: horizontal-scroll-area and horizontal-edge-target added to tests\e2e-windows\fixture-inventory.psd1",
+            "agent-desktop version: $($version.Trim())"
+          ) | Set-Content -LiteralPath (Join-Path $out 'BUNDLE.txt')
+          Push-Location $out
+          Get-ChildItem -Recurse -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | Sort-Object FullName | ForEach-Object {
+            $rel = $_.FullName.Substring($out.Length + 1)
+            "$((Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant())  $rel"
+          } | Set-Content -LiteralPath 'SHA256SUMS.txt'
+          Pop-Location
+          Get-Content -LiteralPath (Join-Path $out 'BUNDLE.txt')
+          (Get-ChildItem -Recurse -File $out | Measure-Object Length -Sum).Sum
+      - name: Upload the bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BUNDLE }}
+          path: ${{ runner.temp }}/${{ env.BUNDLE }}
+          retention-days: 30
+          if-no-files-found: error
+      - name: Completeness check - run the suite from the bundle alone
+        # The source checkout is removed first, so only the bundle is there.
+        # The expected end on a hosted runner is SplitIntegrity (no
+        # foreground hand-over); any earlier abort means the bundle is
+        # missing something.
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force source
+          $root = Join-Path $env:RUNNER_TEMP $env:BUNDLE
+          $log = Join-Path $env:RUNNER_TEMP 'bundle-run.log'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tests\e2e-windows\selftest\Invoke-U6SelfTests.ps1') -AgentDesktopBinary (Join-Path $root 'target\release\agent-desktop.exe') *>&1 | Tee-Object -FilePath $log
+          "u6-exit=$LASTEXITCODE" | Tee-Object -FilePath $log -Append
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $root 'tests\e2e-windows\Run-E2E.ps1') -AgentDesktopBinary (Join-Path $root 'target\release\agent-desktop.exe') -FixtureBinary (Join-Path $root 'tests\fixture-app-windows\build\AgentDeskFixture.exe') *>&1 | Tee-Object -FilePath $log -Append
+          "suite-exit=$LASTEXITCODE" | Tee-Object -FilePath $log -Append
+          $text = Get-Content -Raw -LiteralPath $log
+          if ($text -notmatch 'running scenario SplitIntegrity') { throw 'the suite did not reach SplitIntegrity from the bundle' }
+      - name: Completeness log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BUNDLE }}-completeness-log
+          path: ${{ runner.temp }}/bundle-run.log
+          retention-days: 30
+          if-no-files-found: warn
