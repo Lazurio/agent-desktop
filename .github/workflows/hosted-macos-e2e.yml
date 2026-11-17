@@ -66,6 +66,22 @@ jobs:
       - name: Permissions as the suite sees them
         working-directory: candidate
         run: ./target/release/agent-desktop permissions | tee "$RUNNER_TEMP/out/permissions.json"
+      - name: One frontmost window, as on a person's desktop
+        # A fresh runner has no window at all, and the suite's first gate
+        # (safe-semantic.sh) requires exactly one focused, visible window of
+        # an app that is not its fixture. A Finder window is that window.
+        working-directory: candidate
+        run: |
+          osascript -e 'tell application "Finder" to make new Finder window' \
+                    -e 'tell application "Finder" to activate'
+          sleep 2
+          ./target/release/agent-desktop list-windows | python3 -c '
+          import json, sys
+          windows = json.load(sys.stdin)["data"]
+          focused = [w for w in windows if w.get("is_focused") is True]
+          print("focused windows:", [(w.get("app_name"), w.get("title")) for w in focused])
+          sys.exit(0 if len(focused) == 1 else 1)
+          ' | tee "$RUNNER_TEMP/out/frontmost.txt"
       - name: Native suite (tests/e2e/run.sh)
         working-directory: candidate
         run: |
@@ -86,9 +102,11 @@ jobs:
           step() { echo "\$ agent-desktop $*" >> "$out"; "$B" "$@" >> "$out" 2>&1; echo "[exit $?]" >> "$out"; }
           brew install --cask visual-studio-code >> "$RUNNER_TEMP/out/electron-install.log" 2>&1 \
             && electron="Visual Studio Code" || electron=""
+          # Gatekeeper holds a downloaded app's first start behind a dialog.
+          [ -z "$electron" ] || xattr -dr com.apple.quarantine "/Applications/Visual Studio Code.app"
           for app in TextEdit Calculator Finder ${electron:+"$electron"}; do
-            [ "$app" = Finder ] || step launch "$app"
-            sleep 2
+            [ "$app" = Finder ] || step launch "$app" --timeout-ms 60000
+            sleep 3
             step list-apps --app "$app"
             step list-windows --app "$app"
             step snapshot --app "$app" -i --max-depth 3
