@@ -1,0 +1,102 @@
+name: Hosted macOS E2E of a candidate
+
+# Runs the native suite (`tests/e2e/run.sh`) and the real-app inventory check of
+# Lazurio/agent-desktop#2 on a GitHub-hosted macOS runner. The runner's image
+# grants Accessibility, Screen Recording, PostEvent and Apple Events to System
+# Events to the runner's processes, bash and osascript
+# (actions/runner-images: images/macos/scripts/build/configure-tccdb-macos.sh),
+# and nobody uses its desktop, so it is an exclusive Mac.
+#
+# The code under test is the exact candidate commit below, checked out on its
+# own; this workflow's branch only carries this file and is never merged.
+
+on:
+  push:
+    branches: ["e2e/hosted-macos-*"]
+  workflow_dispatch:
+
+concurrency:
+  group: hosted-macos-e2e-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  CANDIDATE: 8e403858e43dd484437cb3ce815e979872abbc55
+
+jobs:
+  e2e:
+    name: Native macOS E2E (macos-15, Apple silicon)
+    runs-on: macos-15
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.CANDIDATE }}
+          path: candidate
+          persist-credentials: false
+      - name: Machine and candidate
+        working-directory: candidate
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          {
+            date -u
+            sw_vers
+            uname -m
+            git rev-parse HEAD
+          } | tee "$RUNNER_TEMP/out/machine.txt"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE"
+      - name: Pinned Rust toolchain
+        working-directory: candidate
+        run: rustup show && rustc --version
+      - name: Build the release binaries
+        working-directory: candidate
+        run: |
+          cargo build --locked --release -p agent-desktop
+          cargo build --locked --release -p agent-desktop-macos --bin agent-desktop-macos-helper
+          cargo build --locked --profile release-ffi -p agent-desktop-ffi
+      - name: Permissions as the suite sees them
+        working-directory: candidate
+        run: ./target/release/agent-desktop permissions | tee "$RUNNER_TEMP/out/permissions.json"
+      - name: Native suite (tests/e2e/run.sh)
+        working-directory: candidate
+        run: |
+          set +e
+          date -u | tee "$RUNNER_TEMP/out/suite-start.txt"
+          AGENT_DESKTOP_E2E_EXCLUSIVE=1 bash tests/e2e/run.sh 2>&1 | tee "$RUNNER_TEMP/out/suite.log"
+          status=${PIPESTATUS[0]}
+          date -u | tee "$RUNNER_TEMP/out/suite-end.txt"
+          echo "exit=$status" | tee "$RUNNER_TEMP/out/suite-exit.txt"
+          exit "$status"
+      - name: Real-app inventory check (point 2 of Lazurio/agent-desktop#2)
+        if: always()
+        working-directory: candidate
+        run: |
+          set +e
+          B=./target/release/agent-desktop
+          out="$RUNNER_TEMP/out/inventory.log"
+          step() { echo "\$ agent-desktop $*" >> "$out"; "$B" "$@" >> "$out" 2>&1; echo "[exit $?]" >> "$out"; }
+          brew install --cask visual-studio-code >> "$RUNNER_TEMP/out/electron-install.log" 2>&1 \
+            && electron="Visual Studio Code" || electron=""
+          for app in TextEdit Calculator Finder ${electron:+"$electron"}; do
+            [ "$app" = Finder ] || step launch "$app"
+            sleep 2
+            step list-apps --app "$app"
+            step list-windows --app "$app"
+            step snapshot --app "$app" -i --max-depth 3
+          done
+          step list-apps --app com.apple.TextEdit
+          step list-apps --app com.apple.calculator
+          step list-apps
+          for app in TextEdit Calculator ${electron:+"$electron"}; do step close-app "$app"; done
+          echo "electron app: ${electron:-none installed}" >> "$out"
+          cat "$out"
+      - name: Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-macos-e2e-${{ env.CANDIDATE }}
+          path: ${{ runner.temp }}/out
+          retention-days: 30
