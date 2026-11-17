@@ -1,6 +1,7 @@
 use agent_desktop_core::{AdapterError, Deadline, ErrorCode, Rect};
 
 use super::AXElement;
+use super::scroll_clip::{ClipAxes, along_clip_axes, clip_axes};
 
 #[cfg(target_os = "macos")]
 pub(crate) fn rect_from_parts(
@@ -82,12 +83,13 @@ pub(crate) fn clipped_viewport(
     parent: Option<Rect>,
     role: &str,
     bounds: Option<Rect>,
+    axes: ClipAxes,
 ) -> Option<Rect> {
     if !clips_descendants(role) {
         return parent;
     }
     let parent = parent?;
-    let bounds = bounds?;
+    let bounds = along_clip_axes(bounds?, parent, axes);
     Some(intersect_rects(parent, bounds).unwrap_or(Rect {
         x: 0.0,
         y: 0.0,
@@ -117,11 +119,11 @@ pub(crate) fn ancestor_viewport(
             return Ok(viewport);
         }
         if clips_descendants(&role) {
-            viewport = clipped_viewport(
-                viewport,
-                &role,
-                read_bounds_with_deadline(&parent, instant)?,
-            );
+            let bounds = read_bounds_with_deadline(&parent, instant)?;
+            let axes = bounds.map_or(ClipAxes::BOTH, |frame| {
+                clip_axes(&parent, &role, frame, instant)
+            });
+            viewport = clipped_viewport(viewport, &role, bounds, axes);
         }
         if role == "AXWindow" {
             return Ok(viewport);
@@ -198,11 +200,16 @@ mod tests {
     fn only_clipping_containers_narrow_the_viewport() {
         let window = Some(rect(0.0, 500.0));
         assert_eq!(
-            clipped_viewport(window, "AXGroup", Some(rect(20.0, 10.0))),
+            clipped_viewport(window, "AXGroup", Some(rect(20.0, 10.0)), ClipAxes::BOTH),
             window
         );
         assert_eq!(
-            clipped_viewport(window, "AXScrollArea", Some(rect(20.0, 100.0))),
+            clipped_viewport(
+                window,
+                "AXScrollArea",
+                Some(rect(20.0, 100.0)),
+                ClipAxes::BOTH
+            ),
             Some(rect(20.0, 100.0))
         );
     }
@@ -213,12 +220,18 @@ mod tests {
             Some(rect(0.0, 100.0)),
             "AXScrollArea",
             Some(rect(200.0, 100.0)),
+            ClipAxes::BOTH,
         );
         assert_eq!(
             crate::tree::state_reader::offscreen(Some(rect(-50.0, 500.0)), empty),
             Some(true)
         );
-        let nested = clipped_viewport(empty, "AXScrollArea", Some(rect(-50.0, 500.0)));
+        let nested = clipped_viewport(
+            empty,
+            "AXScrollArea",
+            Some(rect(-50.0, 500.0)),
+            ClipAxes::BOTH,
+        );
         assert_eq!(
             crate::tree::state_reader::offscreen(Some(rect(-50.0, 500.0)), nested),
             Some(true)
@@ -228,11 +241,11 @@ mod tests {
     #[test]
     fn missing_clipping_geometry_is_unknown_not_empty() {
         assert_eq!(
-            clipped_viewport(Some(rect(0.0, 100.0)), "AXScrollArea", None),
+            clipped_viewport(Some(rect(0.0, 100.0)), "AXScrollArea", None, ClipAxes::BOTH),
             None
         );
         assert_eq!(
-            clipped_viewport(None, "AXScrollArea", Some(rect(0.0, 100.0))),
+            clipped_viewport(None, "AXScrollArea", Some(rect(0.0, 100.0)), ClipAxes::BOTH),
             None
         );
     }
