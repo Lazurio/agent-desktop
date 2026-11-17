@@ -1,11 +1,13 @@
-name: Hosted macOS diagnosis of one E2E check
+name: Hosted macOS diagnosis of scroll-area geometry
 
-# One check of tests/e2e differs between the candidate of Lazurio/agent-desktop#2
-# and the upstream release it is based on (run 44126028780 on macos-15-intel):
-# "wait actionable evaluates the requested click policy". The suite logs only
-# `data.observed`; this job repeats the same `wait --predicate actionable
-# --action click` on the fixture's primary button and keeps every whole answer,
-# for both commits on the same runner type. Never merged.
+# Lazurio/agent-desktop#2: on macOS 26 the fixture's primary button is reported
+# offscreen because the enclosing SwiftUI AXScrollArea publishes a frame that
+# is not its visible viewport. This job records, per runner image, the AX
+# frames of the button, its ancestors and its window (window near the left
+# edge and moved right), what agent-desktop reports for the button, a click,
+# and the frames of a few probe scroll areas (SwiftUI with hidden indicators,
+# SwiftUI content that fits, AppKit without a horizontal scroller).
+# Never merged.
 
 on:
   push:
@@ -15,18 +17,23 @@ permissions: {}
 
 jobs:
   diag:
-    name: wait actionable (${{ matrix.label }}, ${{ matrix.runner }})
+    name: scroll geometry (${{ matrix.label }}, ${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - { label: candidate, ref: 8e403858e43dd484437cb3ce815e979872abbc55, runner: macos-15-intel }
-          - { label: upstream-v1.3.1, ref: b0b7277bea09b770ef9d1fb45aad667bc432cd57, runner: macos-15-intel }
+          - { label: candidate, ref: 8e403858e43dd484437cb3ce815e979872abbc55, runner: macos-15 }
+          - { label: candidate, ref: 8e403858e43dd484437cb3ce815e979872abbc55, runner: macos-26 }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: diag
+          persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ matrix.ref }}
@@ -38,42 +45,53 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ matrix.ref }}"
           cargo build --locked --release -p agent-desktop
           cargo build --locked --release -p agent-desktop-macos --bin agent-desktop-macos-helper
-      - name: Repeat the check
-        working-directory: candidate
+      - name: Record geometry
         run: |
           set +e
           out="$RUNNER_TEMP/out"; mkdir -p "$out"
-          B="$PWD/target/release/agent-desktop"
-          bash tests/fixture-app/build.sh "$RUNNER_TEMP/fixture" > "$out/fixture-build.log" 2>&1
+          B="$PWD/candidate/target/release/agent-desktop"
+          tools="$RUNNER_TEMP/tools"; mkdir -p "$tools"
+          { sw_vers; uname -m; } > "$out/machine.txt"
+          swiftc -O -o "$tools/axgeom" diag/tests/diag/axgeom.swift -framework Cocoa
+          swiftc -O -parse-as-library -o "$tools/scrollprobe" diag/tests/diag/scrollprobe.swift -framework SwiftUI -framework AppKit
+          AGENT_DESKTOP_FIXTURE_BACKGROUND_BUNDLE=1 bash candidate/tests/fixture-app/build.sh "$tools/fixture" > "$out/fixture-build.log" 2>&1
           osascript -e 'tell application "Finder" to make new Finder window' \
                     -e 'tell application "Finder" to activate'
-          open "$RUNNER_TEMP/fixture/AgentDeskFixture.app"
+          AGENT_DESKTOP_FIXTURE_NO_ACTIVATE=1 "$tools/fixture/AgentDeskFixture.app/Contents/MacOS/AgentDeskFixture" > "$out/fixture.out" 2>&1 &
+          fpid=$!
           sleep 5
-          for i in $(seq 1 10); do
-            found="$("$B" find --app AgentDeskFixture --role button --name primary-button --first)"
-            target="$(printf '%s' "$found" | python3 tests/e2e/json_tool.py target)"
-            ref="${target%%$'\t'*}"
-            echo "== attempt $i ref=$ref" >> "$out/wait.log"
-            "$B" wait --element "$ref" --predicate actionable --timeout 3000 --action click >> "$out/wait.log" 2>&1
-            echo "[exit $?]" >> "$out/wait.log"
-            "$B" click "$ref" > /dev/null 2>&1
-            sleep 0.5
+          for pos in 20,40 400,120; do
+            x="${pos%,*}"; y="${pos#*,}"
+            "$tools/axgeom" move "$fpid" "$x" "$y" >> "$out/diag.log"
+            sleep 1
+            "$tools/axgeom" dump "$fpid" primary-button > "$out/ax-$x-$y.json"
+            "$B" find --app AgentDeskFixture --role button --name primary-button --exact --limit 2 > "$out/find-$x-$y.json" 2>&1
+            ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["data"]["matches"][0]["ref_id"])' "$out/find-$x-$y.json")"
+            "$B" click "$ref" --timeout-ms 1500 > "$out/click-$x-$y.json" 2>&1
+            echo "position $x,$y click exit $?" >> "$out/diag.log"
           done
-          "$B" list-apps > "$out/list-apps.json" 2>&1
-          "$B" close-app AgentDeskFixture --force > /dev/null 2>&1
-          python3 - "$out/wait.log" <<'PY' | tee "$out/summary.txt"
-          import json, re, sys
-          text = open(sys.argv[1]).read()
-          for block in re.split(r"^== ", text, flags=re.M)[1:]:
-              head, _, body = block.partition("\n")
-              raw = body.rsplit("[exit", 1)[0].strip()
-              try:
-                  j = json.loads(raw)
-                  d = j.get("data") or {}
-                  e = j.get("error") or {}
-                  print(head, "ok=", j.get("ok"), "found=", d.get("found"), "observed=", d.get("observed"), "error=", e.get("code"), (e.get("message") or "")[:160])
-              except Exception:
-                  print(head, "non-json:", raw[:200])
+          "$tools/axgeom" tree "$fpid" 3 > "$out/tree.json"
+          kill "$fpid"
+          "$tools/scrollprobe" & ppid=$!
+          sleep 5
+          "$tools/axgeom" move "$ppid" 100 100 >> "$out/diag.log"
+          sleep 1
+          "$tools/axgeom" scrollareas "$ppid" > "$out/probe.json"
+          kill "$ppid"
+          python3 - "$out" <<'PY' | tee "$out/summary.txt"
+          import json, os, sys
+          out = sys.argv[1]
+          print(open(os.path.join(out, "machine.txt")).read())
+          for name in sorted(os.listdir(out)):
+              if name.startswith("ax-"):
+                  d = json.load(open(os.path.join(out, name)))
+                  print("==", name, "window", d["window"].get("pos"), d["window"].get("size"))
+                  for c in d.get("chain", []):
+                      print("  ", c.get("role"), c.get("desc"), c.get("pos"), c.get("size"), "vbar" if c.get("vbar") else "", "hbar" if c.get("hbar") else "")
+              if name.startswith(("find-", "click-")):
+                  print("==", name, open(os.path.join(out, name)).read()[:600])
+          print("== probe")
+          print(open(os.path.join(out, "probe.json")).read())
           PY
       - uses: actions/upload-artifact@v4
         if: always()
