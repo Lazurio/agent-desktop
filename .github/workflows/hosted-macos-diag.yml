@@ -22,9 +22,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { label: candidate, ref: 8e403858e43dd484437cb3ce815e979872abbc55, runner: macos-15-intel }
-          - { label: candidate, ref: 8e403858e43dd484437cb3ce815e979872abbc55, runner: macos-15 }
-          - { label: candidate, ref: 8e403858e43dd484437cb3ce815e979872abbc55, runner: macos-26 }
+          - { label: before-8e403858, ref: 8e403858e43dd484437cb3ce815e979872abbc55, runner: macos-26 }
+          - { label: fix-04e49cfa, ref: 04e49cfa062846d03d5c5f91c7f6bc784b7dcc68, runner: macos-26 }
+          - { label: fix-04e49cfa, ref: 04e49cfa062846d03d5c5f91c7f6bc784b7dcc68, runner: macos-15-intel }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
@@ -60,15 +60,20 @@ jobs:
           AGENT_DESKTOP_FIXTURE_NO_ACTIVATE=1 "$tools/fixture/AgentDeskFixture.app/Contents/MacOS/AgentDeskFixture" > "$out/fixture.out" 2>&1 &
           fpid=$!
           sleep 5
-          for pos in 20,40 400,120; do
-            x="${pos%,*}"; y="${pos#*,}"
+          for geom in 20,28,1400,866 400,120,1383,790; do
+            IFS=, read -r x y w h <<< "$geom"
             "$tools/axgeom" move "$fpid" "$x" "$y" >> "$out/diag.log"
+            "$tools/axgeom" resize "$fpid" "$w" "$h" >> "$out/diag.log"
             sleep 1
-            "$tools/axgeom" dump "$fpid" primary-button > "$out/ax-$x-$y.json"
-            "$B" find --app AgentDeskFixture --role button --name primary-button --exact --limit 2 > "$out/find-$x-$y.json" 2>&1
-            ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["data"]["matches"][0]["ref_id"])' "$out/find-$x-$y.json")"
-            "$B" click "$ref" --timeout-ms 1500 > "$out/click-$x-$y.json" 2>&1
-            echo "position $x,$y click exit $?" >> "$out/diag.log"
+            tag="$x-$y-$w"
+            "$tools/axgeom" dump "$fpid" primary-button > "$out/ax-$tag.json"
+            "$B" snapshot --app AgentDeskFixture --include-bounds > "$out/snapshot-$tag.json" 2>&1
+            "$B" find --app AgentDeskFixture --role button --name primary-button --exact --limit 2 > "$out/find-$tag.json" 2>&1
+            ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["data"]["matches"][0]["ref_id"])' "$out/find-$tag.json")"
+            "$B" click "$ref" --timeout-ms 1500 > "$out/click-$tag.json" 2>&1
+            echo "geometry $geom click exit $?" >> "$out/diag.log"
+            sleep 0.5
+            "$B" find --app AgentDeskFixture --role statictext --native-id click-status --exact --limit 2 > "$out/status-$tag.json" 2>&1
           done
           "$tools/axgeom" tree "$fpid" 3 > "$out/tree.json"
           kill "$fpid"
@@ -88,7 +93,19 @@ jobs:
                   print("==", name, "window", d["window"].get("pos"), d["window"].get("size"))
                   for c in d.get("chain", []):
                       print("  ", c.get("role"), c.get("desc"), c.get("pos"), c.get("size"), "vbar" if c.get("vbar") else "", "hbar" if c.get("hbar") else "")
-              if name.startswith(("find-", "click-")):
+              if name.startswith("snapshot-"):
+                  def walk(n, acc):
+                      if isinstance(n, dict):
+                          if "role" in n and "bounds" in n: acc.append(n)
+                          for v in n.values(): walk(v, acc)
+                      elif isinstance(n, list):
+                          for v in n: walk(v, acc)
+                  try:
+                      acc = []; walk(json.load(open(os.path.join(out, name))).get("data"), acc)
+                      print("==", name, "nodes", len(acc), "offscreen", sum("offscreen" in (n.get("states") or []) for n in acc))
+                  except Exception as error:
+                      print("==", name, "unreadable", error)
+              if name.startswith(("find-", "click-", "status-")):
                   print("==", name, open(os.path.join(out, name)).read()[:600])
           print("== probe")
           print(open(os.path.join(out, "probe.json")).read())
