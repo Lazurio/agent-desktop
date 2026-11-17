@@ -21,19 +21,23 @@ concurrency:
 
 permissions: {}
 
-env:
-  CANDIDATE: 8e403858e43dd484437cb3ce815e979872abbc55
-
 jobs:
   e2e:
-    name: Native macOS E2E (${{ matrix.runner }})
+    name: Native macOS E2E (${{ matrix.label }}, ${{ matrix.runner }})
     strategy:
       fail-fast: false
       matrix:
-        # Apple silicon and Intel: both are targets of the release, and the
-        # Apple silicon pool may not have capacity.
-        runner: [macos-15, macos-15-intel]
+        # The candidate on Apple silicon and Intel (both are release targets),
+        # and the unchanged upstream release it is based on as a baseline on
+        # the same runner: a failure in both comes from the runner or upstream,
+        # not from the Lazurio commits. tests/e2e is identical in both.
+        include:
+          - { label: candidate, ref: 8e403858e43dd484437cb3ce815e979872abbc55, runner: macos-15-intel }
+          - { label: upstream-v1.3.1, ref: b0b7277bea09b770ef9d1fb45aad667bc432cd57, runner: macos-15-intel }
+          - { label: candidate, ref: 8e403858e43dd484437cb3ce815e979872abbc55, runner: macos-15 }
     runs-on: ${{ matrix.runner }}
+    env:
+      CANDIDATE: ${{ matrix.ref }}
     timeout-minutes: 120
     permissions:
       contents: read
@@ -121,6 +125,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hosted-macos-e2e-${{ env.CANDIDATE }}-${{ matrix.runner }}
+          name: hosted-macos-e2e-${{ matrix.label }}-${{ matrix.runner }}
           path: ${{ runner.temp }}/out
           retention-days: 30
