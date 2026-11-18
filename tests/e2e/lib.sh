@@ -10,6 +10,7 @@ app="AgentDeskFixture"
 fixture_pid=""
 fixture_owned=0
 fixture_started=0
+fixture_released=0
 contaminated=0
 ffi_dylib=""
 ffi_dylib_sha=""
@@ -75,11 +76,27 @@ record_fixture_process() {
         return 1
     fi
     fixture_started=1
+    fixture_released=0
+}
+
+# The suite closed its own fixture on purpose (the force-close scenario). Until
+# a scenario starts and records one again, no fixture process may exist at all.
+release_fixture_process() {
+    fixture_pid=""
+    fixture_owned=0
+    fixture_started=0
+    fixture_released=1
 }
 
 check_fixture_contention() {
     local current
     current="$(pgrep -x "$app" 2>/dev/null || true)"
+    if [ "$fixture_released" -eq 1 ] && [ "$fixture_started" -ne 1 ]; then
+        [ -z "$current" ] && return 0
+        badmsg "native E2E fixture ownership changed; the suite closed its fixture, found pid '$current'"
+        contaminated=1
+        return 1
+    fi
     if [ "$fixture_started" -ne 1 ] || [ "$current" != "$fixture_pid" ]; then
         badmsg "native E2E fixture ownership changed; expected pid '$fixture_pid', found '${current:-none}'"
         contaminated=1

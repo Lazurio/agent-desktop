@@ -125,8 +125,7 @@ running_before="$(running)"
 sleep 1.5
 running_after="$(running)"
 if [ "$running_after" = "False" ]; then
-    fixture_owned=0
-    fixture_started=0
+    release_fixture_process
 fi
 assert "force close removes the fixture process" \
     "$([ "$running_before" = "True" ] && [ "$running_after" = "False" ] && echo 1 || echo 0)" \

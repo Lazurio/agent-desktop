@@ -143,6 +143,61 @@ cleanup
 
             self.assertEqual(log.read_text().strip(), "close-app AgentDeskFixture --force")
 
+    def run_contention_check(self, state: str, pids: str):
+        script = r'''
+source "$1"
+pgrep() { printf '%s' "$MOCK_PIDS"; }
+pass=0; fail=0; failures=()
+badmsg() { fail=$((fail + 1)); printf 'FAIL %s\n' "$1"; }
+''' + state + r'''
+if check_fixture_contention; then echo "guard=pass"; else echo "guard=fail"; fi
+echo "contaminated=$contaminated"
+'''
+        environment = os.environ.copy()
+        environment["MOCK_PIDS"] = pids
+        return subprocess.run(
+            ["bash", "-c", script, "contention-test", str(E2E_ROOT / "lib.sh")],
+            capture_output=True,
+            check=True,
+            env=environment,
+            text=True,
+        ).stdout
+
+    def test_contention_guard_follows_the_suites_own_force_close(self):
+        recorded = 'fixture_pid=4242; fixture_started=1; fixture_owned=1'
+        released = recorded + "; release_fixture_process"
+        restarted = released + "; fixture_pid=5151; fixture_started=1; fixture_released=0"
+
+        self.assertIn("guard=pass", self.run_contention_check(recorded, "4242"))
+        for pids in ("", "4343", "4242\n4343"):
+            output = self.run_contention_check(recorded, pids)
+            self.assertIn("guard=fail", output, pids)
+            self.assertIn("contaminated=1", output, pids)
+
+        output = self.run_contention_check(released, "")
+        self.assertIn("guard=pass", output)
+        self.assertIn("contaminated=0", output)
+        for pids in ("4242", "4343"):
+            output = self.run_contention_check(released, pids)
+            self.assertIn("guard=fail", output, pids)
+            self.assertIn("contaminated=1", output, pids)
+
+        self.assertIn("guard=pass", self.run_contention_check(restarted, "5151"))
+        self.assertIn("guard=fail", self.run_contention_check(restarted, ""))
+        self.assertIn("guard=fail", self.run_contention_check("", ""))
+
+    def test_force_close_releases_the_fixture_before_the_next_contention_guard(self):
+        trace = (E2E_ROOT / "scenarios" / "trace_performance.sh").read_text()
+        force_close = trace.index('"$bin" close-app "$app" --force')
+        release = trace.index("release_fixture_process", force_close)
+        self.assertLess(force_close, release)
+        self.assertNotRegex(trace, r"(?m)^\s*fixture_started=0\s*$")
+
+        run_source = (E2E_ROOT / "run.sh").read_text()
+        trace_line = run_source.index('source "$here/scenarios/trace_performance.sh"')
+        guard = run_source.index(CONTENTION_GUARD, trace_line)
+        self.assertLess(guard, run_source.index('source "$here/scenarios/os_surfaces.sh"'))
+
     def test_success_checks_every_staged_native_artifact_before_returning(self):
         source = (E2E_ROOT / "lib.sh").read_text()
         finish = re.search(r"finish\(\) \{(?P<body>.*?)\n\}", source, re.DOTALL)
