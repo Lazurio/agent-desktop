@@ -36,6 +36,25 @@ jobs:
           & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\lazurio-windows-e2e\Diagnose-ContextMenu.ps1 -BundleRoot (Join-Path $env:RUNNER_TEMP 'candidate') -OutDir $out
           "diag-exit=$LASTEXITCODE"
           exit 0
+      - name: Diagnose Preconditions
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'diag-preconditions'
+          Copy-Item scripts\lazurio-windows-e2e\Test-InteractiveInput.ps1 (Join-Path $env:RUNNER_TEMP 'candidate') -ErrorAction SilentlyContinue
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\lazurio-windows-e2e\Diagnose-Preconditions.ps1 -BundleRoot (Join-Path $env:RUNNER_TEMP 'candidate') -OutDir $out
+          "diag-preconditions-exit=$LASTEXITCODE"
+          Get-Content (Join-Path $out 'run.log')
+          Get-Content (Join-Path $out 'diag-lines.txt') -ErrorAction SilentlyContinue
+          Select-String -Path (Join-Path $out 'bundle\tests\e2e-windows\scenarios\Preconditions.ps1') -Pattern 'DIAG' | Select-Object -First 3
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diag-preconditions-logs
+          path: |
+            ${{ runner.temp }}/diag-preconditions/*.log
+            ${{ runner.temp }}/diag-preconditions/*.txt
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         if: always()
         with:
