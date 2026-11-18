@@ -198,6 +198,39 @@ echo "contaminated=$contaminated"
         guard = run_source.index(CONTENTION_GUARD, trace_line)
         self.assertLess(guard, run_source.index('source "$here/scenarios/os_surfaces.sh"'))
 
+    def test_suite_expands_possibly_empty_arrays_safely_under_bash_32(self):
+        # macOS ships /bin/bash 3.2, where "${a[@]}" on an empty array is an
+        # unbound variable under set -u and kills the suite before its summary.
+        bare = re.compile(r'(?<![+])"\$\{(?P<name>[A-Za-z_][A-Za-z0-9_]*)\[@\]\}"')
+        offenders = []
+        for path in [E2E_ROOT / "run.sh", *SOURCED_SUITE_FILES]:
+            for number, line in enumerate(path.read_text().splitlines(), 1):
+                for match in bare.finditer(line):
+                    guard = "${%s[@]+" % match.group("name")
+                    if guard not in line[: match.start()]:
+                        offenders.append(f"{path.name}:{number}: {line.strip()}")
+        self.assertEqual(offenders, [])
+
+    def test_summary_and_cleanup_survive_empty_arrays(self):
+        shell = "/bin/bash" if Path("/bin/bash").exists() else "bash"
+        script = r'''
+set -u
+source "$1"
+contaminated=1
+finish && echo "finish=0" || echo "finish=$?"
+cleanup
+echo "cleanup=done"
+'''
+        result = subprocess.run(
+            [shell, "-c", script, "empty-array-test", str(E2E_ROOT / "lib.sh")],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotIn("unbound variable", result.stderr)
+        self.assertIn("run was contaminated", result.stdout)
+        self.assertIn("finish=1", result.stdout)
+        self.assertIn("cleanup=done", result.stdout)
+
     def test_success_checks_every_staged_native_artifact_before_returning(self):
         source = (E2E_ROOT / "lib.sh").read_text()
         finish = re.search(r"finish\(\) \{(?P<body>.*?)\n\}", source, re.DOTALL)
