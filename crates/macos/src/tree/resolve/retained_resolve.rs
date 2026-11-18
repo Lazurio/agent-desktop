@@ -103,11 +103,29 @@ fn token_read_error(entry: &RefEntry, ax_error: i32) -> AdapterError {
 
 #[cfg(target_os = "macos")]
 fn destroyed_as_stale(entry: &RefEntry, error: AdapterError) -> AdapterError {
-    if error.code == agent_desktop_core::ErrorCode::ElementNotFound {
+    if read_reports_destroyed_element(&error) {
         stale_token_error(entry, RetainedMismatch::Dead)
     } else {
         error
     }
+}
+
+/// Whether a failed attribute read of a token's live element means that the
+/// element is gone: not found, or a surface read the app refused with
+/// `kAXErrorInvalidUIElement`. A token that still resolves and answers `AXPid`
+/// can name an element its app has already destroyed, and the next read is
+/// where that shows; such a token is stale, not a sign of an unresponsive app.
+#[cfg(target_os = "macos")]
+pub(in crate::tree) fn read_reports_destroyed_element(error: &AdapterError) -> bool {
+    if error.code == agent_desktop_core::ErrorCode::ElementNotFound {
+        return true;
+    }
+    let Some(details) = error.details.as_ref() else {
+        return false;
+    };
+    details["kind"] == "surface_read"
+        && details["ax_error"].as_i64()
+            == Some(i64::from(accessibility_sys::kAXErrorInvalidUIElement))
 }
 
 /// Accepts a token's element only when its pid, snapshot role and recorded

@@ -1,6 +1,6 @@
 use super::{
-    RetainedFacts, RetainedMismatch, native_identifier_attribute, resolve_saved_token,
-    token_mismatch,
+    RetainedFacts, RetainedMismatch, native_identifier_attribute, read_reports_destroyed_element,
+    resolve_saved_token, token_mismatch,
 };
 use agent_desktop_core::{
     ElementIdentifier, IdentifierKind, ProcessId, RefCapabilities, RefEntry, RefEntryIdentity,
@@ -145,4 +145,34 @@ fn a_ref_without_a_token_keeps_the_attribute_path() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
 
     assert!(resolve_saved_token(&stored, deadline).unwrap().is_none());
+}
+
+#[test]
+fn a_destroyed_token_element_reads_as_gone_but_other_failures_do_not() {
+    use accessibility_sys::{
+        kAXErrorAPIDisabled, kAXErrorCannotComplete, kAXErrorFailure, kAXErrorInvalidUIElement,
+    };
+    use agent_desktop_core::{AdapterError, ErrorCode};
+
+    // The token resolved and answered AXPid, then AXRole came back invalid:
+    // the element was destroyed after the snapshot.
+    let destroyed = crate::tree::surface_read::map_error("AXRole", kAXErrorInvalidUIElement);
+    assert_eq!(destroyed.code, ErrorCode::AppUnresponsive);
+    assert!(read_reports_destroyed_element(&destroyed));
+    assert!(read_reports_destroyed_element(
+        &AdapterError::element_not_found("AXRole")
+    ));
+
+    for kept in [kAXErrorAPIDisabled, kAXErrorCannotComplete, kAXErrorFailure] {
+        let error = crate::tree::surface_read::map_error("AXRole", kept);
+        assert!(!read_reports_destroyed_element(&error), "ax_error {kept}");
+    }
+    // An unresponsive app without a surface-read diagnosis keeps its code.
+    let unresponsive = AdapterError::new(ErrorCode::AppUnresponsive, "app did not answer")
+        .with_details(serde_json::json!({ "ax_error": kAXErrorInvalidUIElement }));
+    assert!(!read_reports_destroyed_element(&unresponsive));
+    assert!(!read_reports_destroyed_element(&AdapterError::new(
+        ErrorCode::AppUnresponsive,
+        "no details"
+    )));
 }
