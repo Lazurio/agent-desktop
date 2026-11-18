@@ -1,6 +1,26 @@
 use super::finite_target;
 
 #[test]
+fn a_step_counts_only_when_the_value_moves_beyond_the_readback_tolerance() {
+    for (previous, current, applied) in [
+        ("0.299999988079071", "0.2999999523162842", false),
+        ("0.299999988079071", "0.30000001192092896", false),
+        ("0.299999988079071", "0.299999988079071", false),
+        ("0.299999988079071", "0.4000000059604645", true),
+        ("0.4000000059604645", "0.29999998", true),
+        ("5", "5", false),
+        ("5", "6", true),
+        ("9007199254740992", "9007199254740993", true),
+    ] {
+        assert_eq!(
+            super::step_was_applied(previous, current),
+            applied,
+            "{previous} -> {current}"
+        );
+    }
+}
+
+#[test]
 fn increments_stop_at_overshoot_stalls_or_motion_away_from_target() {
     for (before, after, target, expected) in [
         ("5", "6", "5.5", false),

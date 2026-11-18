@@ -212,11 +212,24 @@ mod imp {
         let settle = deadline.capped(std::time::Duration::from_millis(400));
         loop {
             let read = read_number(element, deadline)?;
-            if settle.is_expired() || read.as_ref().is_none_or(|(_, text)| text != previous) {
+            if settle.is_expired()
+                || read
+                    .as_ref()
+                    .is_none_or(|(_, text)| step_was_applied(previous, text))
+            {
                 return Ok(read);
             }
             std::thread::sleep(settle.remaining().min(std::time::Duration::from_millis(20)));
         }
+    }
+
+    /// A control that derives its value from another float, such as the
+    /// Control Center volume slider, can read back the same value with a
+    /// different last digit before the step lands. Only a change beyond the
+    /// readback tolerance shows the step was applied; anything closer is the
+    /// previous value and the wait for the step goes on.
+    pub(crate) fn step_was_applied(previous: &str, current: &str) -> bool {
+        !increment_target_reached(current, previous)
     }
 
     pub(crate) fn increment_target_reached(current: &str, target: &str) -> bool {
@@ -245,7 +258,7 @@ mod imp {
 pub(crate) use imp::{increment_to_value, set_bool_verified, set_dynamic_verified};
 
 #[cfg(all(test, target_os = "macos"))]
-use imp::{finite_target, increment_action, increment_target_reached};
+use imp::{finite_target, increment_action, increment_target_reached, step_was_applied};
 
 #[cfg(test)]
 #[path = "chain_value_write_tests.rs"]
