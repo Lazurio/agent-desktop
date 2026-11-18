@@ -37,6 +37,12 @@ assert "wait enabled observes the asynchronous transition" \
 
 require_target primary button primary-button
 require_value actionable_before click-status
+# The legs above press controls further down the window, and pressing one the
+# window does not show scrolls the fixture's main scroll view to it. Where the
+# fixture does not fit the display, primary-button then sits above the
+# viewport. `wait` never scrolls and the click policy it evaluates requires
+# `visible`, so bring the target into view first, as `click` itself would.
+primary_reveal="$(act_target "$primary" scroll-to 2>/dev/null)"
 wait_actionable="$(wait_target "$primary" actionable 3000 --action click 2>/dev/null)"
 actionable_click="$(act_target "$primary" click 2>/dev/null)"
 sleep 0.35
@@ -49,10 +55,11 @@ actionable_after_count="${actionable_after##*-}"
 case "$actionable_before_count" in *[!0-9]*|'') actionable_before_count=-1 ;; esac
 case "$actionable_after_count" in *[!0-9]*|'') actionable_after_count=-1 ;; esac
 assert "wait actionable evaluates the requested click policy" \
-    "$([ "$(json_field "$wait_actionable" data.found)" = "True" ] && \
+    "$([ "$(json_field "$primary_reveal" ok)" = "True" ] && \
+        [ "$(json_field "$wait_actionable" data.found)" = "True" ] && \
         [ "$(json_field "$actionable_click" ok)" = "True" ] && \
         [ "$actionable_after_count" -eq $((actionable_before_count + 1)) ] && echo 1 || echo 0)" \
-    "before=$actionable_before after=$actionable_after click_ok=$(json_field "$actionable_click" ok) observed=$(json_field "$wait_actionable" data.observed)"
+    "before=$actionable_before after=$actionable_after reveal_ok=$(json_field "$primary_reveal" ok) click_ok=$(json_field "$actionable_click" ok) observed=$(json_field "$wait_actionable" data.observed) last_observed=$(json_field "$wait_actionable" error.details.last_observed)"
 wait_visible="$(wait_target "$primary" visible 3000 2>/dev/null)"
 visible_read="$(is_target "$primary" visible 2>/dev/null)"
 assert "wait visible succeeds for the primary button" \

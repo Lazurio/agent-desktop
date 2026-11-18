@@ -390,6 +390,17 @@ class KeyboardAndRefChurnLegTests(unittest.TestCase):
         self.assertIn('"$stale_delivery" = "not_delivered"', source)
         self.assertIn('"$row_gone" = "1"', source)
 
+    def test_wait_actionable_leg_reveals_its_target_before_waiting(self):
+        source = RELIABILITY.read_text()
+        removed_row = source.index('act_target "$remove_row" click')
+        reveal = source.index('primary_reveal="$(act_target "$primary" scroll-to')
+        wait = source.index('wait_actionable="$(wait_target "$primary" actionable')
+        click = source.index('actionable_click="$(act_target "$primary" click')
+        self.assertLess(removed_row, reveal)
+        self.assertLess(reveal, wait)
+        self.assertLess(wait, click)
+        self.assertIn('[ "$(json_field "$primary_reveal" ok)" = "True" ]', source)
+
     def test_new_legs_use_error_codes_that_exist_in_the_core_enum(self):
         known = core_error_codes()
         for path in (KEYBOARD, REF_CHURN, RELIABILITY):
