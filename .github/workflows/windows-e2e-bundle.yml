@@ -32,7 +32,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { label: candidate, ref: 7529fdecf74b03d9fb30d142ea886f4a0ede33aa }
+          - { label: candidate, ref: a357bf56b36605857ee3537f6ee23ee3ddad94df }
           - { label: upstream-v1.3.1, ref: b0b7277bea09b770ef9d1fb45aad667bc432cd57 }
     runs-on: windows-2025
     timeout-minutes: 120
