@@ -43,7 +43,7 @@ os_restore_volume() {
 }
 
 os_control_center_volume() {
-    local extras panel sound_ref detail slider_ref set_output volume volume_moved=0
+    local extras opened panel sound_ref detail slider_ref set_output volume volume_moved=0
     extras="$("$bin" snapshot --surface menu-bar-extras -i 2>/dev/null)"
     os_cc_ref="$(os_ref "$extras" "Control Center")"
     if [ -z "$os_cc_ref" ]; then
@@ -52,10 +52,14 @@ os_control_center_volume() {
     fi
     okmsg "menu-bar-extras snapshot lists the Control Center item  [$os_cc_ref]"
     os_panel_open=1
-    panel="$("$bin" click "$os_cc_ref" --wait-for "button:Sound" 2>/dev/null)"
+    # A post-action wait on a menu-bar-extras ref observes the status item bar
+    # it came from, never the panel the click opens, so the panel is read
+    # through its own process snapshot.
+    opened="$("$bin" click "$os_cc_ref" 2>/dev/null)"
+    panel="$("$bin" snapshot --app "Control Center" -i --wait-for "button:Sound" 2>/dev/null)"
     sound_ref="$(os_ref "$panel" Sound)"
-    if [ -z "$sound_ref" ]; then
-        badmsg "clicking Control Center did not return a panel snapshot with a Sound button  [ok=$(json_field "$panel" ok) error=$(json_field "$panel" error.code)]"
+    if [ "$(json_field "$opened" ok)" != "True" ] || [ -z "$sound_ref" ]; then
+        badmsg "clicking Control Center did not open a panel with a Sound button  [click_ok=$(json_field "$opened" ok) click_error=$(json_field "$opened" error.code) panel_ok=$(json_field "$panel" ok) panel_error=$(json_field "$panel" error.code)]"
         return
     fi
     detail="$("$bin" click "$sound_ref" --wait-for "slider:sound volume" 2>/dev/null)"

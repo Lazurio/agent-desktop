@@ -231,6 +231,20 @@ echo "cleanup=done"
         self.assertIn("finish=1", result.stdout)
         self.assertIn("cleanup=done", result.stdout)
 
+    def test_control_center_panel_is_observed_through_its_process(self):
+        # A post-action wait keeps a process-owned ref's source surface, so a
+        # wait on the menu-bar-extras item reads the status item bar and can
+        # never see the panel the click opens.
+        source = (E2E_ROOT / "scenarios" / "os_surfaces.sh").read_text()
+        self.assertNotRegex(source, r'click "\$os_cc_ref" --wait-for')
+        click = source.index('opened="$("$bin" click "$os_cc_ref" 2>/dev/null)"')
+        panel = source.index(
+            'panel="$("$bin" snapshot --app "Control Center" -i --wait-for "button:Sound"',
+            click,
+        )
+        gate = source.index('[ "$(json_field "$opened" ok)" != "True" ] || [ -z "$sound_ref" ]', panel)
+        self.assertLess(gate, source.index('"$bin" click "$sound_ref"', gate))
+
     def test_success_checks_every_staged_native_artifact_before_returning(self):
         source = (E2E_ROOT / "lib.sh").read_text()
         finish = re.search(r"finish\(\) \{(?P<body>.*?)\n\}", source, re.DOTALL)
