@@ -1,0 +1,44 @@
+name: Windows context-menu diagnostic
+
+# Runs scripts/lazurio-windows-e2e/Diagnose-ContextMenu.ps1 on a hosted
+# windows-2025 runner against the candidate bundle of run 44204706356, where
+# Preconditions resolves context-choice: a check of the diagnostic itself
+# before it runs on a Windows 11 machine. This branch is never merged.
+
+on:
+  push:
+    branches: ["e2e/windows-diag-*"]
+
+permissions: {}
+
+jobs:
+  diag:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/lazurio-windows-e2e
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-desktop-e2e-candidate
+          path: ${{ runner.temp }}/candidate
+          run-id: 44204706356
+          github-token: ${{ github.token }}
+      - name: Diagnose
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'diag'
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\lazurio-windows-e2e\Diagnose-ContextMenu.ps1 -BundleRoot (Join-Path $env:RUNNER_TEMP 'candidate') -OutDir $out
+          "diag-exit=$LASTEXITCODE"
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diag-contextmenu
+          path: ${{ runner.temp }}/diag
+          retention-days: 30
